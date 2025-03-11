@@ -12,6 +12,7 @@ namespace JsonDiffPatchDotNet
 			ArrayDiff = ArrayDiffMode.Efficient;
 			TextDiff = TextDiffMode.Efficient;
 			MinEfficientTextDiffLength = 50;
+			DiffArrayOptions = new ArrayOptions();
 		}
 
 		/// <summary>
@@ -39,6 +40,11 @@ namespace JsonDiffPatchDotNet
 		/// Specifies behaviors to apply to the diff patch set
 		/// </summary>
 		public DiffBehavior DiffBehaviors { get; set; }
+
+		/// <summary>
+		/// Specifies options related to array property moves and how they are shown in the diff.
+		/// </summary>
+		public ArrayOptions DiffArrayOptions { get; set; }
 		
         /// <summary>
         /// for LCS to work, it needs a way to match items between previous/original (or left/right) arrays. In traditional text diff tools this is trivial, as two lines of text are compared char 
@@ -52,4 +58,23 @@ namespace JsonDiffPatchDotNet
         /// </summary>
         public Func<JToken, object> ObjectHash { get; set; }
     }
+
+	public sealed class ArrayOptions
+	{
+		public ArrayOptions()
+		{
+			DetectMove = false;
+			IncludeValueOnMove = false;
+		}
+
+		/// <summary>
+		/// Specifies whether values moving within the array should be caught as a move, rather than a create and a delete.
+		/// </summary>
+		public bool DetectMove { get; set; }
+
+		/// <summary>
+		/// If not set, only moved value's index will appear in the diff result. The value will be "". 
+		/// </summary>
+		public bool IncludeValueOnMove { get; set; }
+	}
 }

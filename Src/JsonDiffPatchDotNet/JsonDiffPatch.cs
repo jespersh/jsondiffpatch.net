@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Dynamic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Xml.Linq;
 using DiffMatchPatch;
 using Newtonsoft.Json.Linq;
 
@@ -379,7 +381,8 @@ namespace JsonDiffPatchDotNet
         {
             var objectHash = this._options.ObjectHash;
             var itemMatch = new DefaultItemMatch(objectHash);
-            var result = JObject.Parse(@"{ ""_t"": ""a"" }");
+			
+			var result = JObject.Parse(@"{ ""_t"": ""a"" }");
 
             int commonHead = 0;
             int commonTail = 0;
@@ -389,22 +392,20 @@ namespace JsonDiffPatchDotNet
 
             var childContext = new List<JToken>();
 
-            // Find common head
-            while (commonHead < left.Count
-                && commonHead < right.Count
-                && itemMatch.Match(left[commonHead], right[commonHead]))
-            {
-                var index = commonHead;
-                var child = Diff(left[index], right[index]);
-                if(child != null)
-                {
-                    result[$"{index}"] = child;
-                }
-                commonHead++;
-            }
+			while (commonHead < left.Count
+				&& commonHead < right.Count
+				&& itemMatch.Match(left[commonHead], right[commonHead]))
+			{
+				var index = commonHead;
+				var child = Diff(left[index], right[index]);
+				if (child != null)
+				{
+					result[$"{index}"] = child;
+				}
+				commonHead++;
+			}
 
-            // Find common tail
-            while (commonTail + commonHead < left.Count
+			while (commonTail + commonHead < left.Count
                 && commonTail + commonHead < right.Count
                 && itemMatch.Match(left[left.Count - 1 - commonTail], right[right.Count - 1 - commonTail]))
             {
@@ -428,35 +429,52 @@ namespace JsonDiffPatchDotNet
 
                 return result;
             }
+
             if (commonHead + commonTail == right.Count)
             {
                 // Trivial case, a block (1 or more consecutive items) was removed
                 for (int index = commonHead; index < left.Count - commonTail; ++index)
                 {
-                    if (result.ContainsKey(index.ToString()))
-                    {
-                        result.Remove(index.ToString());
-                    }
-                    result[$"_{index}"] = new JArray(left[index], 0, (int)DiffOperation.Deleted);
+					if (result.ContainsKey(index.ToString()))
+					{
+						result.Remove(index.ToString());
+					}
+
+					result[$"_{index}"] = new JArray(left[index], 0, (int)DiffOperation.Deleted);
                 }
 
                 return result;
             }
 
-            // Complex Diff, find the LCS (Longest Common Subsequence)
-            List<JToken> trimmedLeft = left.ToList().GetRange(commonHead, left.Count - commonTail - commonHead);
+			// Keep track of items in the array that were deleted, as if they are added back, 
+			// they can be treated as moves
+			Dictionary<object, int> deletes = new Dictionary<object, int>();
+			
+			var comparer = new JTokenEqualityComparer();
+
+			// Complex Diff, find the LCS (Longest Common Subsequence)
+			List<JToken> trimmedLeft = left.ToList().GetRange(commonHead, left.Count - commonTail - commonHead);
             List<JToken> trimmedRight = right.ToList().GetRange(commonHead, right.Count - commonTail - commonHead);
+			
             Lcs lcs = Lcs.Get(trimmedLeft, trimmedRight, itemMatch);
 
             for (int index = commonHead; index < left.Count - commonTail; ++index)
             {
                 if (lcs.Indices1.IndexOf(index - commonHead) < 0)
                 {
-                    // Removed
                     if (result.ContainsKey(index.ToString()))
                     {
                         result.Remove(index.ToString());
                     }
+
+					// If handling moves, mark the delete
+					if (_options.DiffArrayOptions.DetectMove)
+					{
+						var entryId = (objectHash == null || left[index].Type != JTokenType.Object) ? comparer.GetHashCode(left[index]) : objectHash.Invoke(left[index]);
+
+						deletes.Add(entryId, index);
+					}
+					
                     result[$"_{index}"] = new JArray(left[index], 0, (int)DiffOperation.Deleted);
                 }
             }
@@ -465,10 +483,35 @@ namespace JsonDiffPatchDotNet
             {
                 int indexRight = lcs.Indices2.IndexOf(index - commonHead);
 
-                if (indexRight < 0)
+				if (indexRight < 0)
                 {
-                    // Added
-                    result[$"{index}"] = new JArray(right[index]);
+					// If handling moves, check to see if the entry was already marked as deleted
+					var entryId = (objectHash == null || right[index].Type != JTokenType.Object) ? comparer.GetHashCode(right[index]) : objectHash.Invoke(right[index]);
+
+					if (_options.DiffArrayOptions.DetectMove && deletes.ContainsKey(entryId))
+					{
+						// If added and deleted, it was moved (though still potentially modified)
+						var compareIndex = deletes[entryId];
+						result.Remove("_" + compareIndex.ToString());
+
+						// Only include a move in final result if flag is set
+						if (_options.DiffArrayOptions.IncludeValueOnMove)
+						{
+							result[$"_{compareIndex}"] = new JArray("", index, 3);
+						}
+
+						JToken diff = Diff(left[compareIndex], right[index]);
+
+						if (diff != null)
+						{
+							result[$"{index}"] = diff;
+						}
+					}
+					else
+					{
+						// Added
+						result[$"{index}"] = new JArray(right[index]);
+					}
                 }
                 else
                 {
@@ -483,6 +526,12 @@ namespace JsonDiffPatchDotNet
                     }
                 }
             }
+
+			if (JToken.DeepEquals(result, JObject.Parse(@"{ ""_t"": ""a"" }")))
+			{
+				// result is empty, so ignored moves were the only modifications
+				return null;
+			}
 
             return result;
         }

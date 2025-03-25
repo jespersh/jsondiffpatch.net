@@ -462,6 +462,7 @@ namespace JsonDiffPatchDotNet
             {
                 if (lcs.Indices1.IndexOf(index - commonHead) < 0)
                 {
+					// Removed
                     if (result.ContainsKey(index.ToString()))
                     {
                         result.Remove(index.ToString());

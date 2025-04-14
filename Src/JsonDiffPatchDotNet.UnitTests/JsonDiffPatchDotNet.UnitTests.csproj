@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks Condition="'$(TestFrameworks)'==''">net45</TargetFrameworks>
+    <TargetFrameworks Condition="'$(TestFrameworks)'==''">net452</TargetFrameworks>
     <TargetFrameworks Condition="'$(TestFrameworks)'!=''">$(TestFrameworks)</TargetFrameworks>
     <IsPackable>false</IsPackable>
     <RootNamespace>JsonDiffPatchDotNet.UnitTests</RootNamespace>

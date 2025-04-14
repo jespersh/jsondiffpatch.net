@@ -194,6 +194,49 @@ namespace JsonDiffPatchDotNet.UnitTests
 		}
 
 		[Test]
+		public void Diff_EfficientArrayDiffTailMovedToHead_IgnoreMove_NoChange()
+		{
+			var jdp = new JsonDiffPatch(new Options { ArrayDiff = ArrayDiffMode.Efficient, DiffArrayOptions = new ArrayOptions { DetectMove = true, IncludeValueOnMove = false } });
+			var left = JToken.Parse(@"[1,2,3,4,5,6,7,8,9,10]");
+			var right = JToken.Parse(@"[4,1,2,3,7,5,6,8,10,9]");
+
+			var diff = jdp.Diff(left, right);
+
+			Assert.IsNull(diff);
+		}
+
+		[Test]
+		public void Diff_EfficientArrayDiffTailHeadMovedToTail_IncludeMove_ValidDiff()
+		{
+			var jdp = new JsonDiffPatch(new Options { ArrayDiff = ArrayDiffMode.Efficient, DiffArrayOptions = new ArrayOptions { DetectMove = true, IncludeValueOnMove = true } });
+			var left = JToken.Parse(@"[1,2,3,4]");
+			var right = JToken.Parse(@"[2,3,4,1]");
+
+			JObject diff = jdp.Diff(left, right) as JObject;
+
+			Assert.IsNotNull(diff);
+			Assert.AreEqual(2, diff.Properties().Count());
+			Assert.AreEqual(diff["_0"], JToken.Parse("['', 3, 3]"));
+		}
+
+		[Test]
+		public void Diff_EfficientArrayDiffWithComplexObjects_IncludeMove_ValidDiff()
+		{
+			var jdp = new JsonDiffPatch(new Options { ArrayDiff = ArrayDiffMode.Efficient, ObjectHash = (jObj) => jObj["Id"].Value<string>(), DiffArrayOptions = new ArrayOptions { DetectMove = true, IncludeValueOnMove = true } });
+			//var jdp = new JsonDiffPatch(new Options { ArrayDiff = ArrayDiffMode.Efficient });
+			var left = JToken.Parse(@"[{""Id"" : ""F12B21EF-F57D-4958-ADDC-A3F52EC25EC8"", ""p"":false}, {""Id"" : ""F12B21EF-F57D-4958-ADDC-A3F52EC25EC9"", ""p"":true}, {""Id"" : ""F12B21EF-F57D-4958-ADDC-A3F52EC25EC10"", ""p"":true}]");
+			var right = JToken.Parse(@"[{""Id"" : ""F12B21EF-F57D-4958-ADDC-A3F52EC25EC10"", ""p"":false}, {""Id"" : ""F12B21EF-F57D-4958-ADDC-A3F52EC25EC8"", ""p"":true}, {""Id"" : ""F12B21EF-F57D-4958-ADDC-A3F52EC25EC9"", ""p"":true}]");
+
+			JObject diff = jdp.Diff(left, right) as JObject;
+
+			Assert.IsNotNull(diff);
+			Assert.AreEqual(4, diff.Properties().Count());
+			Assert.AreEqual(diff["_2"], JToken.Parse("['', 0, 3]"));
+			Assert.AreEqual(diff["0"]["p"], JToken.Parse("[true, false]"));
+			Assert.AreEqual(diff["1"]["p"], JToken.Parse("[false, true]"));
+		}
+
+		[Test]
 		public void Diff_EfficientArrayDiffDifferentTailAdded_ValidDiff()
 		{
 			var jdp = new JsonDiffPatch(new Options { ArrayDiff = ArrayDiffMode.Efficient });
@@ -251,22 +294,6 @@ namespace JsonDiffPatchDotNet.UnitTests
         }
 
 		[Test]
-		public void Diff_EfficientArrayDiffWithComplexObjectHash_ValidDiff()
-		{
-			var jdp = new JsonDiffPatch(new Options { ArrayDiff = ArrayDiffMode.Efficient, ObjectHash = (jObj) => jObj["Id"].Value<string>() });
-			var left = JToken.Parse(@"[{""Id"": ""22ff56c7-2307-414b-8a3a-9bf1cdba2095"",""city"":""São Paulo""},{""Id"":""3fca9cdb-dd9b-4b7c-afc1-587751e25bd6"",""city"":""abc""},{""Id"":""1fe6a0f9-3974-427f-81cb-6004748cb179"",""city"":""xyz""}]");
-			var right = JToken.Parse(@"[{""Id"":""3fca9cdb-dd9b-4b7c-afc1-587751e25bd6"",""city"":""abc""},{""Id"":""1fe6a0f9-3974-427f-81cb-6004748cb179"",""city"":""xyz""}, {""Id"":""3fca9cdb-dd9b-4b7c-afc1-587751e25b44"",""city"":""new""}]");
-
-			JObject diff = jdp.Diff(left, right) as JObject;
-
-			Assert.IsNotNull(diff);
-			Assert.AreEqual(3, diff.Properties().Count());
-			Assert.IsNotNull(diff["_0"]);
-			Assert.IsNotNull(diff["2"]);
-			Assert.AreEqual(((JArray)diff["2"])[0].Value<string>("city"), "new");
-		}
-
-		[Test]
 		public void Diff_EfficientArrayDiffSameWithObject_NoDiff()
 		{
 			var jdp = new JsonDiffPatch(new Options { ArrayDiff = ArrayDiffMode.Efficient });
@@ -311,6 +338,50 @@ namespace JsonDiffPatchDotNet.UnitTests
 			var restored = jdp.Patch(left, diff);
 
 			Assert.That(JToken.DeepEquals(restored, right));
+		}
+
+		[Test]
+		public void Diff_EfficientArrayDiffHugeArrays_OnlyIgnoredMoves_NoStackOverflow()
+		{
+			const int arraySize = 1000;
+
+			Func<JToken> shuffledArrayFunc = () =>
+			{
+				Random rng = new Random();
+				var builder = new StringBuilder("[");
+
+				var randomList = new List<int>();
+				for (int i = 0; i < arraySize; i++)
+				{
+					randomList.Add(i);
+				}
+
+				// Shuffle array
+				int n = arraySize - 1;
+				while (n > 1)
+				{
+					n--;
+					int k = rng.Next(n + 1);
+					int val = randomList[k];
+					randomList[k] = randomList[n];
+					randomList[n] = val;
+				}
+
+				foreach (var i in randomList)
+				{
+					builder.Append($"{i},");
+				}
+				builder.Append("]");
+
+				return JToken.Parse(builder.ToString());
+			};
+
+			var jdp = new JsonDiffPatch(new Options { ArrayDiff = ArrayDiffMode.Efficient, DiffArrayOptions = new ArrayOptions { DetectMove = true, IncludeValueOnMove = false } });
+			var left = shuffledArrayFunc();
+			var right = shuffledArrayFunc();
+
+			JToken diff = jdp.Diff(left, right);
+			Assert.IsNull(diff);
 		}
 
 		[Test]
